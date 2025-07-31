@@ -9,20 +9,19 @@
 /* $OpenBSD$ */
 
 #include <stddef.h>
-#include <stdint.h>
 
 #define KEYSTREAM_ONLY
 
 typedef struct
 {
-    uint32_t input[16]; /* could be compressed */
+    unsigned long input[16]; /* could be compressed */
 } chacha_ctx;
 
 typedef unsigned char u8;
-typedef uint32_t      u32;
+typedef unsigned long u32;
 
 #define U8C(v) (v##U)
-#define U32C(v) (v##U)
+#define U32C(v) (v##UL)
 
 #define U8V(v) ((u8)(v) & U8C(0xFF))
 #define U32V(v) ((u32)(v) & U32C(0xFFFFFFFF))
@@ -59,7 +58,7 @@ static const char sigma[16] = "expand 32-byte k";
 static const char tau[16] = "expand 16-byte k";
 
 static void
-chacha_keysetup(chacha_ctx *x,const u8 *k,u32 kbits,u32 ivbits)
+chacha_keysetup(chacha_ctx *x, const u8 *k, u32 kbits, u32 ivbits)
 {
     const char *constants;
 
@@ -86,7 +85,7 @@ chacha_keysetup(chacha_ctx *x,const u8 *k,u32 kbits,u32 ivbits)
 }
 
 static void
-chacha_ivsetup(chacha_ctx *x,const u8 *iv)
+chacha_ivsetup(chacha_ctx *x, const u8 *iv)
 {
   x->input[12] = 0;
   x->input[13] = 0;
@@ -95,13 +94,13 @@ chacha_ivsetup(chacha_ctx *x,const u8 *iv)
 }
 
 static void
-chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
+chacha_encrypt_bytes(chacha_ctx *x, const u8 *m, u8 *c, u32 bytes)
 {
   u32 x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15;
   u32 j0, j1, j2, j3, j4, j5, j6, j7, j8, j9, j10, j11, j12, j13, j14, j15;
   u8 *ctarget = NULL;
   u8 tmp[64];
-  u_int i;
+  unsigned int i;
 
   if (!bytes) return;
 
@@ -124,7 +123,7 @@ chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
 
   for (;;) {
     if (bytes < 64) {
-      for (i = 0;i < bytes;++i) tmp[i] = m[i];
+      for (i = 0; i < bytes; ++i) tmp[i] = m[i];
       m = tmp;
       ctarget = c;
       c = tmp;
@@ -145,7 +144,7 @@ chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
     x13 = j13;
     x14 = j14;
     x15 = j15;
-    for (i = 20;i > 0;i -= 2) {
+    for (i = 20; i > 0; i -= 2) {
       QUARTERROUND( x0, x4, x8,x12)
       QUARTERROUND( x1, x5, x9,x13)
       QUARTERROUND( x2, x6,x10,x14)
@@ -216,7 +215,7 @@ chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
 
     if (bytes <= 64) {
       if (bytes < 64) {
-        for (i = 0;i < bytes;++i) ctarget[i] = c[i];
+        for (i = 0; i < bytes; ++i) ctarget[i] = c[i];
       }
       x->input[12] = j12;
       x->input[13] = j13;
@@ -259,7 +258,6 @@ chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -268,13 +266,18 @@ chacha_encrypt_bytes(chacha_ctx *x,const u8 *m,u8 *c,u32 bytes)
 #include <assert.h>
 #include <pthread.h>
 
+/* C89 doesn't have stdint.h, so we define our own types */
+#ifndef UINT8_MAX
+typedef unsigned char uint8_t;
+typedef unsigned long uint32_t;
+#endif
 
 #define ARC4R_KEYSZ     32
 #define ARC4R_IVSZ      8
 #define ARC4R_BLOCKSZ   64
 #define ARC4R_RSBUFSZ   (16*ARC4R_BLOCKSZ)
 
-// must be a power of 2
+/* must be a power of 2 */
 #define REKEY_BASE      (1 << 10)
 
 struct rand_state
@@ -293,7 +296,7 @@ extern int getentropy(void* buf, size_t n);
 
 #define minimum(a, b) ((a) < (b) ? (a) : (b))
 
-static inline void
+static void
 _rs_init(rand_state* st, uint8_t *buf, size_t n)
 {
     assert(n >= (ARC4R_KEYSZ + ARC4R_IVSZ));
@@ -302,16 +305,18 @@ _rs_init(rand_state* st, uint8_t *buf, size_t n)
     chacha_ivsetup(&st->rs_chacha,  buf + ARC4R_KEYSZ);
 }
 
-static inline void
+static void
 _rs_rekey(rand_state* st, uint8_t *dat, size_t datlen)
 {
+    size_t m, i;
+    
     /* fill rs_buf with the keystream */
     chacha_encrypt_bytes(&st->rs_chacha, st->rs_buf, st->rs_buf, sizeof st->rs_buf);
 
     /* mix in optional user provided data */
     if (dat) {
-        size_t m = minimum(datlen, ARC4R_KEYSZ + ARC4R_IVSZ);
-        for (size_t i = 0; i < m; i++)
+        m = minimum(datlen, ARC4R_KEYSZ + ARC4R_IVSZ);
+        for (i = 0; i < m; i++)
             st->rs_buf[i] ^= dat[i];
 
         memset(dat, 0, datlen);
@@ -335,9 +340,9 @@ _rs_stir(rand_state* st)
     uint8_t rnd[ARC4R_KEYSZ + ARC4R_IVSZ];
     size_t rekey_fuzz = 0;
     uint8_t *fuzzp    = (uint8_t*)&rekey_fuzz;
+    int r;
 
-
-    int r = getentropy(rnd, sizeof rnd);
+    r = getentropy(rnd, sizeof rnd);
     assert(r == 0);
 
     _rs_rekey(st, rnd, sizeof(rnd));
@@ -350,18 +355,7 @@ _rs_stir(rand_state* st)
     st->rs_count = REKEY_BASE + (rekey_fuzz % REKEY_BASE);
 }
 
-static inline void
-_rs_stir_if_needed(rand_state* st, size_t len)
-{
-    if (st->rs_count <= len)
-        _rs_stir(st);
-
-    st->rs_count -= len;
-}
-
-// consume 'n' random btyes from the entropy buffer. Return total
-// actually consumed.
-static inline size_t
+static size_t
 _rs_consume(rand_state *rs, uint8_t *buf, size_t n)
 {
     size_t m    = minimum(n, rs->rs_have);
@@ -372,15 +366,25 @@ _rs_consume(rand_state *rs, uint8_t *buf, size_t n)
     return m;
 }
 
-static inline void
+static void
+_rs_stir_if_needed(rand_state* st, size_t len)
+{
+    if (st->rs_count <= len)
+        _rs_stir(st);
+
+    st->rs_count -= len;
+}
+
+static void
 _rs_random_buf(rand_state* rs, void *_buf, size_t n)
 {
     uint8_t *buf = (uint8_t *)_buf;
+    size_t m;
 
     _rs_stir_if_needed(rs, n);
     while (n > 0) {
         if (rs->rs_have > 0) {
-            size_t m = _rs_consume(rs, buf, n);
+            m = _rs_consume(rs, buf, n);
             buf += m;
             n   -= m;
         } else 
@@ -388,7 +392,7 @@ _rs_random_buf(rand_state* rs, void *_buf, size_t n)
     }
 }
 
-static inline void
+static void
 _rs_setup(rand_state *rs)
 {
     uint8_t rnd[ARC4R_KEYSZ + ARC4R_IVSZ];
@@ -427,8 +431,8 @@ static volatile uint32_t Rforked = 0;
 static void
 atfork(void)
 {
-    // the pthread_atfork() callbacks called once per process.
-    // We set it to be called by the child process.
+    /* the pthread_atfork() callbacks called once per process.
+       We set it to be called by the child process. */
     Rforked++;
 }
 
@@ -443,17 +447,18 @@ screate(void)
     pthread_atfork(0, 0, atfork);
 }
 
-
 /*
  * Get the per-thread rand state. Initialize if needed.
  */
 static rand_state*
 sget(void)
 {
+    volatile pthread_key_t* k = &Rkey;
+    rand_state * z;
+    
     pthread_once(&Ronce, screate);
 
-    volatile pthread_key_t* k = &Rkey;
-    rand_state * z = (rand_state *)pthread_getspecific(*k);
+    z = (rand_state *)pthread_getspecific(*k);
     if (!z) {
         z = _rs_new();
         z->rs_pid = getpid();
@@ -480,8 +485,9 @@ sget(void)
  * essentially free for non .so use cases.
  *
  */
-static __thread rand_state st = { .rs_count = 0, .rs_pid = -1, .rs_have = 0 };
-static inline rand_state*
+static __thread rand_state st = { 0, 0, -1, {{0}}, {0} };
+
+static rand_state*
 sget(void)
 {
     rand_state* s = &st;
@@ -499,7 +505,7 @@ sget(void)
  * Public API.
  */
 
-static inline uint32_t
+static uint32_t
 __rand32(rand_state *z)
 {
     uint32_t v;
@@ -513,7 +519,6 @@ arc4random(void)
     rand_state* z = sget();
     return __rand32(z);
 }
-
 
 void
 arc4random_buf(void* b, size_t n)
